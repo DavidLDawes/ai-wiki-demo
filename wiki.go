@@ -20,12 +20,12 @@ type Page struct {
 	Body  []byte
 }
 
-func (p *Page) save() error {
+func (p *Page) save(log *log.Logger) error {
 	filename := p.Title + ".txt"
 	return os.WriteFile(filename, p.Body, 0600)
 }
 
-func loadPage(title string) (*Page, error) {
+func loadPage(title string, log *log.Logger) (*Page, error) {
 	fmt.Println("loadPage")
 	filename := title + ".txt"
 	body, err := os.ReadFile(filename)
@@ -38,11 +38,13 @@ func loadPage(title string) (*Page, error) {
 }
 
 func viewHandler(w http.ResponseWriter, r *http.Request, title string) {
-	fmt.Println("viewHandler")
-	p, err := loadPage(title)
+	logger := log.New(os.Stdout, "INFO: ", log.Ldate|log.Ltime)
+	logger.Println("viewHandler entered")
+	p, err := loadPage(title, logger)
 	if err != nil {
 		// no previous page found, get one from Anthropic via API
 		// Prepare a message request
+		logger.Println("viewHandler: No previous page found")
 		request := anthropic.NewMessageRequest(
 			[]anthropic.MessagePartRequest{
 				{Role: "user",
@@ -53,17 +55,18 @@ func viewHandler(w http.ResponseWriter, r *http.Request, title string) {
 		)
 
 		// Call the Message method
+		logger.Println("viewHandler: call the Anthropic message client")
 		response, err := client.Message(ctx, request)
 		if err != nil {
-			fmt.Println("Exception attempting to use Anthropic for AI definition.")
+			logger.Println("viewHandler: Exception attempting to use Anthropic for AI definition.")
 			http.Redirect(w, r, "/edit/"+title, http.StatusFound)
 			return
 		} else {
 			if response != nil {
-				fmt.Println(response.Content)
+				logger.Println("viewHandler: got content ==>", response.Content)
 				p = &Page{Title: title, Body: []byte(response.Content[0].Text)}
 			} else {
-				fmt.Println("Empty result using Anthropic for AI definition.")
+				logger.Println("viewHandler: Empty result using Anthropic for AI definition.")
 				http.Redirect(w, r, "/edit/"+title, http.StatusFound)
 				return
 			}
