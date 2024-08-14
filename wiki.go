@@ -1,0 +1,148 @@
+// Copyright 2024 David L. Dawes. All rights reserved.
+
+package main
+
+import (
+	"context"
+	"fmt"
+	"github.com/madebywelch/anthropic-go/v3/pkg/anthropic"
+	"github.com/madebywelch/anthropic-go/v3/pkg/anthropic/client/native"
+	"html/template"
+	"log"
+	"net/http"
+	"os"
+	"regexp"
+	"strings"
+)
+
+type Page struct {
+	Title string
+	Body  []byte
+}
+
+func (p *Page) save() error {
+	filename := p.Title + ".txt"
+	return os.WriteFile(filename, p.Body, 0600)
+}
+
+func loadPage(title string) (*Page, error) {
+	fmt.Println("loadPage")
+	filename := title + ".txt"
+	body, err := os.ReadFile(filename)
+	if err != nil {
+
+		return nil, err
+
+	}
+	return &Page{Title: title, Body: body}, nil
+}
+
+func viewHandler(w http.ResponseWriter, r *http.Request, title string) {
+	fmt.Println("viewHandler")
+	p, err := loadPage(title)
+	if err != nil {
+		// no previous page found, get one from Anthropic via API
+		// Prepare a message request
+		request := anthropic.NewMessageRequest(
+			[]anthropic.MessagePartRequest{
+				{Role: "user",
+					Content: []anthropic.ContentBlock{anthropic.NewTextContentBlock("define " + title +
+						" with a short sentence, no introduction")}}},
+			anthropic.WithModel[anthropic.MessageRequest](anthropic.ClaudeV2_1),
+			anthropic.WithMaxTokens[anthropic.MessageRequest](60),
+		)
+
+		// Call the Message method
+		response, err := client.Message(ctx, request)
+		if err != nil {
+			fmt.Println("Exception attempting to use Anthropic for AI definition.")
+			http.Redirect(w, r, "/edit/"+title, http.StatusFound)
+			return
+		} else {
+			if response != nil {
+				fmt.Println(response.Content)
+				p = &Page{Title: title, Body: []byte(response.Content[0].Text)}
+			} else {
+				fmt.Println("Empty result using Anthropic for AI definition.")
+				http.Redirect(w, r, "/edit/"+title, http.StatusFound)
+				return
+			}
+		}
+	}
+	renderTemplate(w, "view", p)
+}
+
+func editHandler(w http.ResponseWriter, r *http.Request, title string) {
+	fmt.Println("editHandler")
+	p, err := loadPage(title)
+	if err != nil {
+
+		p = &Page{Title: title}
+
+	}
+	renderTemplate(w, "edit", p)
+}
+
+func saveHandler(w http.ResponseWriter, r *http.Request, title string) {
+	fmt.Println("saveHandler")
+	body := r.FormValue("body")
+	p := &Page{Title: title, Body: []byte(body)}
+	err := p.save()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/view/"+title, http.StatusFound)
+}
+
+var templates = template.Must(template.ParseFiles("edit.html", "view.html"))
+
+func renderTemplate(w http.ResponseWriter, tmpl string, p *Page) {
+	err := templates.ExecuteTemplate(w, tmpl+".html", p)
+	if err != nil {
+
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+
+	}
+}
+
+var validPath = regexp.MustCompile("^/(edit|save|view)/([a-zA-Z0-9]+)$")
+
+func makeHandler(fn func(http.ResponseWriter, *http.Request, string)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		m := validPath.FindStringSubmatch(r.URL.Path)
+		if m == nil {
+			http.NotFound(w, r)
+			return
+		}
+		fn(w, r, m[2])
+	}
+}
+
+var ctx context.Context
+var client *native.Client
+
+func main() {
+	var err error
+	var apiKey = ""
+	ctx = context.Background()
+
+	for _, e := range os.Environ() {
+		pair := strings.SplitN(e, "=", 2)
+		if pair[0] == "ANTHROPICAPIKEY" {
+			apiKey = pair[1]
+		}
+	}
+
+	client, err = native.MakeClient(native.Config{
+		APIKey: apiKey,
+	})
+	if err != nil {
+		panic(err)
+	}
+
+	http.HandleFunc("/view/", makeHandler(viewHandler))
+	http.HandleFunc("/edit/", makeHandler(editHandler))
+	http.HandleFunc("/save/", makeHandler(saveHandler))
+	log.Fatal(http.ListenAndServe(":8080", nil))
+}
