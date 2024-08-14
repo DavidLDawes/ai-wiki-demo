@@ -1,6 +1,6 @@
 module wiki
 
-go 1.22.2
+go 1.22.3
 
 require github.com/madebywelch/anthropic-go/v3 v3.1.0
 
