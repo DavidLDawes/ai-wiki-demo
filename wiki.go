@@ -20,6 +20,12 @@ type Page struct {
 	Body  []byte
 }
 
+type AnthropicWork struct {
+	writer  http.ResponseWriter
+	request *http.Request
+	title   string
+}
+
 func (p *Page) save(log *log.Logger) error {
 	filename := p.Title + ".txt"
 	return os.WriteFile(filename, p.Body, 0600)
@@ -36,8 +42,49 @@ func getAIDefinition(title string, log *log.Logger) (*anthropic.MessageResponse,
 	)
 
 	// Call the Message method
-	log.Println("viewHandler: call the Anthropic message client")
+	log.Println("getAIDefinition: call the Anthropic message client")
 	return client.Message(ctx, request)
+}
+
+func getAnthropic(work AnthropicWork) {
+	// get a definition from Anthropic via API
+	logger := log.New(os.Stdout, "INFO: ", log.Ldate|log.Ltime)
+	p, err := loadPage(work.title, logger)
+	logger.Println("anthropic: after loadPage, page ==", p)
+	if err != nil {
+		// put a simple empty page in place
+		p = &Page{Title: work.title, Body: make([]byte, 0)}
+
+		// no previous page found, get one from Anthropic via API
+		response, err := getAIDefinition(work.title, logger)
+		if err != nil {
+			logger.Println("anthropic: Exception attempting to use Anthropic for AI definition.")
+			logger.Println("anthropic: handle this as a new record, so edit it")
+
+			http.Redirect(work.writer, work.request, "/edit/"+work.title, http.StatusFound)
+			return
+		} else {
+			logger.Println("anthropic: after getAIDefinition, no error")
+			if response != nil {
+				logger.Println("getAnthropic: got content ==>", response.Content)
+				p.Body = []byte(response.Content[0].Text)
+				err := p.save(logger)
+				if err != nil {
+					logger.Println("getAnthropic: failed to save new AI generated definition, returning HTTP internal service error")
+					http.Error(work.writer, err.Error(), http.StatusInternalServerError)
+					return
+				}
+			} else {
+				logger.Println("getAnthropic: Empty result using Anthropic for AI definition.")
+				logger.Println("getAnthropic: handle this as a new record, so edit it")
+
+				http.Redirect(work.writer, work.request, "/edit/"+work.title, http.StatusFound)
+				return
+			}
+		}
+	}
+	logger.Println("getAnthropic: rendering template with result")
+	renderTemplate(work.writer, "view", p)
 }
 
 func loadPage(title string, log *log.Logger) (*Page, error) {
@@ -55,37 +102,7 @@ func loadPage(title string, log *log.Logger) (*Page, error) {
 func viewHandler(w http.ResponseWriter, r *http.Request, title string) {
 	logger := log.New(os.Stdout, "INFO: ", log.Ldate|log.Ltime)
 	logger.Println("viewHandler entered")
-	p, err := loadPage(title, logger)
-	if err != nil {
-		// no previous page found, get one from Anthropic via API
-		response, err := getAIDefinition(title, logger)
-		if err != nil {
-			logger.Println("viewHandler: Exception attempting to use Anthropic for AI definition.")
-			logger.Println("editHandler: handle this as a new record, so edit it")
-
-			http.Redirect(w, r, "/edit/"+title, http.StatusFound)
-			return
-		} else {
-			if response != nil {
-				logger.Println("viewHandler: got content ==>", response.Content)
-				p = &Page{Title: title, Body: []byte(response.Content[0].Text)}
-				err := p.save(logger)
-				if err != nil {
-					logger.Println("viewHandler: failed to save new AI generated definition, returning HTTP internal service error")
-					http.Error(w, err.Error(), http.StatusInternalServerError)
-					return
-				}
-			} else {
-				logger.Println("viewHandler: Empty result using Anthropic for AI definition.")
-				logger.Println("editHandler: handle this as a new record, so edit it")
-
-				http.Redirect(w, r, "/edit/"+title, http.StatusFound)
-				return
-			}
-		}
-	}
-	logger.Println("viewHandler: rendering template with result")
-	renderTemplate(w, "view", p)
+	getAnthropic(AnthropicWork{w, r, title})
 }
 
 func editHandler(w http.ResponseWriter, r *http.Request, title string) {
