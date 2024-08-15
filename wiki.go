@@ -25,6 +25,21 @@ func (p *Page) save(log *log.Logger) error {
 	return os.WriteFile(filename, p.Body, 0600)
 }
 
+func getAIDefinition(title string, log *log.Logger) (*anthropic.MessageResponse, error) {
+	request := anthropic.NewMessageRequest(
+		[]anthropic.MessagePartRequest{
+			{Role: "user",
+				Content: []anthropic.ContentBlock{anthropic.NewTextContentBlock("define " + title +
+					" with a short sentence, no introduction")}}},
+		anthropic.WithModel[anthropic.MessageRequest](anthropic.ClaudeV2_1),
+		anthropic.WithMaxTokens[anthropic.MessageRequest](60),
+	)
+
+	// Call the Message method
+	log.Println("viewHandler: call the Anthropic message client")
+	return client.Message(ctx, request)
+}
+
 func loadPage(title string, log *log.Logger) (*Page, error) {
 	fmt.Println("loadPage")
 	filename := title + ".txt"
@@ -43,20 +58,7 @@ func viewHandler(w http.ResponseWriter, r *http.Request, title string) {
 	p, err := loadPage(title, logger)
 	if err != nil {
 		// no previous page found, get one from Anthropic via API
-		// Prepare a message request
-		logger.Println("viewHandler: No previous page found")
-		request := anthropic.NewMessageRequest(
-			[]anthropic.MessagePartRequest{
-				{Role: "user",
-					Content: []anthropic.ContentBlock{anthropic.NewTextContentBlock("define " + title +
-						" with a short sentence, no introduction")}}},
-			anthropic.WithModel[anthropic.MessageRequest](anthropic.ClaudeV2_1),
-			anthropic.WithMaxTokens[anthropic.MessageRequest](60),
-		)
-
-		// Call the Message method
-		logger.Println("viewHandler: call the Anthropic message client")
-		response, err := client.Message(ctx, request)
+		response, err := getAIDefinition(title, logger)
 		if err != nil {
 			logger.Println("viewHandler: Exception attempting to use Anthropic for AI definition.")
 			logger.Println("editHandler: handle this as a new record, so edit it")
@@ -67,6 +69,12 @@ func viewHandler(w http.ResponseWriter, r *http.Request, title string) {
 			if response != nil {
 				logger.Println("viewHandler: got content ==>", response.Content)
 				p = &Page{Title: title, Body: []byte(response.Content[0].Text)}
+				err := p.save(logger)
+				if err != nil {
+					logger.Println("viewHandler: failed to save new AI generated definition, returning HTTP internal service error")
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
 			} else {
 				logger.Println("viewHandler: Empty result using Anthropic for AI definition.")
 				logger.Println("editHandler: handle this as a new record, so edit it")
