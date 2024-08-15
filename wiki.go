@@ -59,6 +59,8 @@ func viewHandler(w http.ResponseWriter, r *http.Request, title string) {
 		response, err := client.Message(ctx, request)
 		if err != nil {
 			logger.Println("viewHandler: Exception attempting to use Anthropic for AI definition.")
+			logger.Println("editHandler: handle this as a new record, so edit it")
+
 			http.Redirect(w, r, "/edit/"+title, http.StatusFound)
 			return
 		} else {
@@ -67,31 +69,37 @@ func viewHandler(w http.ResponseWriter, r *http.Request, title string) {
 				p = &Page{Title: title, Body: []byte(response.Content[0].Text)}
 			} else {
 				logger.Println("viewHandler: Empty result using Anthropic for AI definition.")
+				logger.Println("editHandler: handle this as a new record, so edit it")
+
 				http.Redirect(w, r, "/edit/"+title, http.StatusFound)
 				return
 			}
 		}
 	}
+	logger.Println("viewHandler: rendering template with result")
 	renderTemplate(w, "view", p)
 }
 
 func editHandler(w http.ResponseWriter, r *http.Request, title string) {
-	fmt.Println("editHandler")
-	p, err := loadPage(title)
+	logger := log.New(os.Stdout, "INFO: ", log.Ldate|log.Ltime)
+	logger.Println("editHandler")
+	p, err := loadPage(title, logger)
 	if err != nil {
-
+		logger.Println("editHandler: loadpage error, using empty definition")
 		p = &Page{Title: title}
-
 	}
+	logger.Println("editHandler: rendering template with result")
 	renderTemplate(w, "edit", p)
 }
 
 func saveHandler(w http.ResponseWriter, r *http.Request, title string) {
-	fmt.Println("saveHandler")
+	logger := log.New(os.Stdout, "INFO: ", log.Ldate|log.Ltime)
+	logger.Println("saveHandler")
 	body := r.FormValue("body")
 	p := &Page{Title: title, Body: []byte(body)}
-	err := p.save()
+	err := p.save(logger)
 	if err != nil {
+		logger.Println("saveHandler: failed to save, returning HTTP internal service error")
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
