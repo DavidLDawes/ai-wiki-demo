@@ -2,7 +2,7 @@ module wiki
 
 go 1.22.0
 
-require github.com/madebywelch/anthropic-go/v3 v3.1.0
+require github.com/madebywelch/anthropic-go/v3 v3.2.1
 
 require (
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
